@@ -54,3 +54,9 @@ class UserAPIView(APIView):
     def get(self,request):
         return Response(UserSerializer(request.user).data)
 
+
+class RefreshAPIView(APIView):
+    def post(self, request):
+        refresh_token = request.COOKIES.get('refresh_token')
+
+        return Response(refresh_token)
