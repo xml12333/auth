@@ -1,7 +1,7 @@
 from email import message
-import email
 from rest_framework.views import APIView
 from rest_framework.response import Response
+
 from .authentication import JWTAuthentication, create_access_token, create_refresh_token, decode_refresh_token
 from .serializers import UserSerializer
 from rest_framework import exceptions
@@ -10,7 +10,7 @@ import datetime
 import random
 import string
 from django.core.mail import send_mail
-
+import pyotp
 
 class RegisterAPIView(APIView):
     def post(self, request):
@@ -38,11 +38,39 @@ class LoginAPIView(APIView):
         if not user.check_password(password):
             raise exceptions.AuthenticationFailed("Invalid credentials")
 
-        access_token = create_access_token(user.id)
-        refresh_token = create_refresh_token(user.id)
+        if user.tfa_secret:
+            return Response({
+                'id':user.id
+            })
+        secret = pyotp.random_base32()
+        otpauth_url = pyotp.totp.TOTP(secret).provisioning_uri(issuer_name='Auth')
+   
+        return Response({
+            'id': user.id,
+            'secret': secret,
+            'otpauth_url':otpauth_url
+        })
+
+class TwoFactorLoginAPIView(APIView):
+    def post (self,request):
+        id = request.data['id']
+        user = User.objects.filter(pk=id)
+        if not user:
+            raise exceptions.AuthenticationFailed("Invalid credentials")
+        
+        secret= user.tfa_secret if user.tfa_secret !='' else request.data['secret']
+        if not pyotp.TOTP(secret).verify(request.data['code']):
+            raise exceptions.AuthenticationFailed("Invalid credentials")
+        
+        if user.tfa_secret == '':
+            user.tfa_secret = secret
+            user.save()
+            
+        access_token = create_access_token(id)
+        refresh_token = create_refresh_token(id)
 
         UserToken.objects.create(
-            user_id=user.id,
+            user_id=id,
             token=refresh_token,
             expired_at=datetime.datetime.utcnow() + datetime.timedelta(seconds=30),
         )
@@ -53,6 +81,7 @@ class LoginAPIView(APIView):
         response = Response()
         response.set_cookie(key='refresh_token',
                             value=refresh_token, httponly=True)
+
         response.data = {
             'token': access_token
         }
@@ -140,11 +169,10 @@ class ResetAPIView(APIView):
 
         if not user:
             raise exceptions.APIException("User not found!")
-        
+
         user.set_password(data['password'])
         user.save()
 
         return Response({
             'message': 'success'
         })
-

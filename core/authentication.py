@@ -7,6 +7,8 @@ from .models import User
 
 class JWTAuthentication(BaseAuthentication):
     def authenticate(self, request):
+        
+        # for HTTP_AUTHORIZATION
         auth = get_authorization_header(request).split()
 
         if auth and len(auth) == 2:
@@ -15,8 +17,20 @@ class JWTAuthentication(BaseAuthentication):
 
             user = User.objects.get(pk=id)
 
-            return (user,None)
+            return (user, None)
+        # for 'HTTP_COOKIE' its wrong
+        # authCookie = request.META.get('HTTP_COOKIE')
+        # if authCookie :
+        #     authCookie = authCookie.split('=')
+        #     if len(authCookie) == 2:
+        #         token = authCookie[1]
+            
+        #         id = decode_refresh_token(token)
+        #         user = User.objects.get(pk=id)
+        #         return (user, None)
         
+       
+
         raise exceptions.AuthenticationFailed('unauthenticated')
 
 
@@ -25,6 +39,7 @@ def create_access_token(id):
         'user_id': id,
         'exp': datetime.datetime.utcnow() + datetime.timedelta(seconds=30),
         'iat': datetime.datetime.utcnow(),
+
     }, 'access_secret', algorithm='HS256')
 
 
@@ -44,6 +59,7 @@ def create_refresh_token(id):
         'iat': datetime.datetime.utcnow(),
     }, 'refresh_secret', algorithm='HS256')
 
+
 def decode_refresh_token(token):
     try:
         payload = jwt.decode(token, 'refresh_secret', algorithms='HS256')
@@ -51,3 +67,5 @@ def decode_refresh_token(token):
         return payload['user_id']
     except:
         raise exceptions.AuthenticationFailed('unauthenticated')
+
+       
