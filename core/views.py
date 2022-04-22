@@ -12,6 +12,10 @@ import string
 from django.core.mail import send_mail
 import pyotp
 
+from google.oauth2 import id_token
+from google.auth.transport.requests import Request as GoogleRequest
+
+
 class RegisterAPIView(APIView):
     def post(self, request):
         data = request.data
@@ -40,32 +44,34 @@ class LoginAPIView(APIView):
 
         if user.tfa_secret:
             return Response({
-                'id':user.id
+                'id': user.id
             })
         secret = pyotp.random_base32()
-        otpauth_url = pyotp.totp.TOTP(secret).provisioning_uri(issuer_name='Auth')
-   
+        otpauth_url = pyotp.totp.TOTP(
+            secret).provisioning_uri(issuer_name='Auth')
+
         return Response({
             'id': user.id,
             'secret': secret,
-            'otpauth_url':otpauth_url
+            'otpauth_url': otpauth_url
         })
 
+
 class TwoFactorLoginAPIView(APIView):
-    def post (self,request):
+    def post(self, request):
         id = request.data['id']
         user = User.objects.filter(pk=id)
         if not user:
             raise exceptions.AuthenticationFailed("Invalid credentials")
-        
-        secret= user.tfa_secret if user.tfa_secret !='' else request.data['secret']
+
+        secret = user.tfa_secret if user.tfa_secret != '' else request.data['secret']
         if not pyotp.TOTP(secret).verify(request.data['code']):
             raise exceptions.AuthenticationFailed("Invalid credentials")
-        
+
         if user.tfa_secret == '':
             user.tfa_secret = secret
             user.save()
-            
+
         access_token = create_access_token(id)
         refresh_token = create_refresh_token(id)
 
@@ -176,3 +182,41 @@ class ResetAPIView(APIView):
         return Response({
             'message': 'success'
         })
+
+
+class GoogleAuthAPIView(APIView):
+    def post(self, request):
+        token = request.data['token']
+        googleUser = id_token.verify_token(token, GoogleRequest())
+        if not googleUser:
+            raise exceptions.AuthenticationFailed('unauthenticated')
+        user = User.objects.filter(email=googleUser['email']).first()
+
+        if not user:
+            user = User.objects.create(
+                first_name=googleUser['given_name'],
+                last_name=googleUser['family_name'],
+                email=googleUser['email']
+
+            )
+            user.set_password(token)
+            user.save()
+
+            access_token = create_access_token(user.id)
+            refresh_token = create_refresh_token(user.id)
+
+            UserToken.objects.create(
+                user_id=user.id,
+                token=refresh_token,
+                expired_at=datetime.datetime.utcnow() + datetime.timedelta(seconds=30),
+            )
+
+            response = Response()
+            response.set_cookie(key='refresh_token',
+                                value=refresh_token, httponly=True)
+
+            response.data = {
+                'token': access_token
+            }
+
+            return response
